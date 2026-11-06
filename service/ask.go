@@ -35,6 +35,14 @@ func (s AskService) Ask(ctx context.Context, rawToken, question string) (map[str
 	if question == "" {
 		return nil, 400, fmt.Errorf("question is required")
 	}
+	if isGreeting(question) {
+		_ = s.Repo.Log(ctx, org, assistant, "answered")
+		return map[string]any{
+			"answer":     "Hello! Ask a question about this organization's uploaded documents.",
+			"outcome":    "answered",
+			"references": []models.Reference{},
+		}, 200, nil
+	}
 	chunks, err := s.Repo.Search(ctx, org, question)
 	if err != nil {
 		return nil, 500, err
@@ -57,6 +65,12 @@ func (s AskService) Ask(ctx context.Context, rawToken, question string) (map[str
 	_ = s.Repo.Log(ctx, org, assistant, outcome)
 	return map[string]any{"answer": answer, "outcome": outcome, "references": refs, "decision": decision}, 200, nil
 }
+
+func isGreeting(question string) bool {
+	q := strings.ToLower(strings.TrimSpace(question))
+	return q == "hi" || q == "hii" || q == "hello" || q == "hey" || q == "good morning" || q == "good afternoon" || q == "good evening"
+}
+
 func references(chunks []models.Chunk) []models.Reference {
 	seen := map[string]bool{}
 	out := []models.Reference{}
@@ -130,13 +144,40 @@ func (s AskService) generate(ctx context.Context, q, e string, d models.Decision
 		if outcome == "human_review" {
 			return "More information is required before this policy decision can be made.", nil
 		}
-		first := strings.TrimSpace(strings.Split(e, "\n")[1])
-		if first == "" {
-			first = "The retrieved document contains relevant information."
-		}
-		return first, nil
+		return relevantExcerpt(q, e), nil
 	}
 	payload, _ := json.Marshal(map[string]any{"question": q, "evidence": e, "decision_result": d, "references": refs, "outcome": outcome})
 	return s.LLM.Complete(ctx, "Answer using only supplied evidence and decision result. Do not invent facts. If insufficient, say the knowledge base does not contain the required information. Return plain answer text.", string(payload))
+}
+
+func relevantExcerpt(question, evidence string) string {
+	compact := strings.Join(strings.Fields(evidence), " ")
+	lower := strings.ToLower(compact)
+	ignored := map[string]bool{"about": true, "and": true, "are": true, "can": true, "does": true, "for": true, "from": true, "has": true, "have": true, "how": true, "the": true, "this": true, "what": true, "which": true, "with": true, "your": true}
+	for _, raw := range strings.Fields(strings.ToLower(question)) {
+		term := strings.Trim(raw, ".,?!:;\"'()[]{}")
+		if len(term) <= 2 || ignored[term] {
+			continue
+		}
+		if at := strings.Index(lower, term); at >= 0 {
+			start := at - 180
+			if start < 0 {
+				start = 0
+			}
+			end := at + 520
+			if end > len(compact) {
+				end = len(compact)
+			}
+			prefix, suffix := "", ""
+			if start > 0 {
+				prefix = "…"
+			}
+			if end < len(compact) {
+				suffix = "…"
+			}
+			return prefix + strings.TrimSpace(compact[start:end]) + suffix
+		}
+	}
+	return "The retrieved document contains relevant information."
 }
 func jsonBlock(s string) string { re := regexp.MustCompile(`(?s)\{.*\}`); return re.FindString(s) }

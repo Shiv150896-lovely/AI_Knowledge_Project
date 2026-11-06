@@ -102,22 +102,23 @@ func (r Repository) RotateAssistant(ctx context.Context, org, publicToken, hash,
 	return err
 }
 func (r Repository) Search(ctx context.Context, org, question string) ([]models.Chunk, error) {
-	terms := strings.Fields(strings.ToLower(question))
+	terms := searchTerms(question)
 	if len(terms) == 0 {
 		return nil, nil
 	}
 	clauses := make([]string, 0, len(terms))
+	scoreParts := make([]string, 0, len(terms))
 	args := []any{org}
 	for _, t := range terms {
-		if len(t) > 2 {
-			args = append(args, "%"+t+"%")
-			clauses = append(clauses, fmt.Sprintf("lower(c.content) LIKE $%d", len(args)))
-		}
+		args = append(args, "%"+t+"%")
+		placeholder := fmt.Sprintf("$%d", len(args))
+		clauses = append(clauses, "lower(c.content) LIKE "+placeholder)
+		scoreParts = append(scoreParts, "CASE WHEN lower(c.content) LIKE "+placeholder+" THEN 1 ELSE 0 END")
 	}
 	if len(clauses) == 0 {
 		return nil, nil
 	}
-	q := "SELECT c.document_id,d.filename,c.page_number,c.content FROM document_chunks c JOIN documents d ON d.id=c.document_id WHERE c.organization_id=$1 AND d.status='ready' AND (" + strings.Join(clauses, " OR ") + ") ORDER BY c.page_number LIMIT 8"
+	q := "SELECT c.document_id,d.filename,c.page_number,c.content FROM document_chunks c JOIN documents d ON d.id=c.document_id WHERE c.organization_id=$1 AND d.status='ready' AND (" + strings.Join(clauses, " OR ") + ") ORDER BY (" + strings.Join(scoreParts, " + ") + ") DESC, c.page_number LIMIT 8"
 	rows, err := r.DB.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
@@ -132,6 +133,41 @@ func (r Repository) Search(ctx context.Context, org, question string) ([]models.
 		out = append(out, x)
 	}
 	return out, rows.Err()
+}
+
+var ignoredSearchTerms = map[string]bool{
+	"about": true, "and": true, "are": true, "can": true, "could": true, "does": true,
+	"for": true, "from": true, "has": true, "have": true, "how": true, "into": true,
+	"please": true, "tell": true, "that": true, "the": true, "this": true, "was": true,
+	"what": true, "when": true, "where": true, "which": true, "who": true, "why": true,
+	"will": true, "with": true, "would": true, "your": true,
+}
+
+var relatedSearchTerms = map[string][]string{
+	"salary":  {"pay", "amount", "earnings", "compensation"},
+	"skills":  {"skill", "languages", "frameworks", "technologies"},
+	"backend": {"golang", "gin", "api", "microservices"},
+}
+
+func searchTerms(question string) []string {
+	seen := map[string]bool{}
+	terms := []string{}
+	add := func(term string) {
+		term = strings.Trim(strings.ToLower(term), ".,?!:;\"'()[]{}")
+		if len(term) <= 2 || ignoredSearchTerms[term] || seen[term] {
+			return
+		}
+		seen[term] = true
+		terms = append(terms, term)
+	}
+	for _, term := range strings.Fields(question) {
+		cleaned := strings.Trim(strings.ToLower(term), ".,?!:;\"'()[]{}")
+		add(cleaned)
+		for _, related := range relatedSearchTerms[cleaned] {
+			add(related)
+		}
+	}
+	return terms
 }
 func (r Repository) Log(ctx context.Context, org, assistant, outcome string) error {
 	_, err := r.DB.Exec(ctx, "INSERT INTO question_logs(organization_id,assistant_id,outcome) VALUES($1,$2,$3)", org, assistant, outcome)
