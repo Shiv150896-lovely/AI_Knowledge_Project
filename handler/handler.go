@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 	"os"
+	"strings"
 
 	"ai-knowledge-assistant/Repository"
 	"ai-knowledge-assistant/Utils"
@@ -110,6 +111,9 @@ func (h Handler) Upload(c *gin.Context) {
 			} else {
 				status, code = 422, "page_limit"
 			}
+		}
+		if strings.Contains(msg, "contains no extractable text") || strings.HasPrefix(msg, "extract page") {
+			status, code = 422, "document_processing_failure"
 		}
 		fail(c, status, code, msg)
 		return

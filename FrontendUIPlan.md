@@ -45,7 +45,7 @@ Use a responsive layout: persistent left navigation on desktop and a compact top
 - Validate required values before submit; password must be at least eight characters.
 - Call `POST /api/auth/register` with JSON.
 - Store `access_token` only for the active dashboard session.
-- Show the returned assistant URL/embed code on success, then route to Knowledge Base.
+- Save the returned JWT on success and route to Knowledge Base. The Assistant page displays the assistant URL and embed code.
 - Show the backend error message for duplicate email or invalid fields.
 
 **Login fields:** email, password.
@@ -135,7 +135,7 @@ For the existing backend route, use the token in the page URL only to send `X-As
 
 1. Register Organization A and enter its dashboard.
 2. Upload a valid PDF and confirm its filename, page count, and `ready` status appear in Knowledge Base.
-3. Copy Organization A’s embed code into a simple external HTML page and open it.
+3. Set backend `APP_BASE_URL` to the deployed frontend origin, then copy Organization A’s embed code into a simple external HTML page and open it.
 4. Ask direct-information, policy, procedural, multi-condition decision, comparison, and no-answer questions.
 5. Confirm answers show document/page references when knowledge exists, and the no-answer message when it does not.
 6. Register Organization B, upload different documents, and verify its dashboard and embedded assistant show only Organization B data.

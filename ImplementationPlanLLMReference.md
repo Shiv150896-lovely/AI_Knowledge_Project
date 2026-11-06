@@ -30,7 +30,7 @@ Input:
 Expected JSON:
 
 ```json
-{"question_type":"multi_condition_decision","policy_category":"merit_scholarship","required_facts":["year","gpa","existing_sports_scholarship"],"provided_facts":{"gpa":3.8,"existing_sports_scholarship":true},"missing_facts":["year"],"needs_decision":true}
+{"question_type":"multi_condition_decision","policy_category":"merit_scholarship","required_facts":["academic_year","gpa","existing_sports_scholarship"],"provided_facts":{"gpa":3.8,"existing_sports_scholarship":true},"missing_facts":["academic_year"],"needs_decision":true}
 ```
 
 ## System 1 decision contracts
@@ -39,11 +39,11 @@ Run independent decisions in parallel where inputs are available.
 
 | Decision type | Name | Input | Output |
 |---|---|---|---|
-| Classification/choice | Policy category | Question-understanding JSON and policy excerpts | `{ "category": "merit_scholarship", "confidence": 0.92 }` |
-| Boolean | Eligibility | Required facts and category rules | `{ "eligible": true, "reasons": ["GPA meets requirement"] }` |
-| Score | Policy support | Retrieved evidence and rule matches | `{ "score": 0.86, "reason": "Most required rule evidence is present" }` |
+| Classification/choice | Policy category | Question-understanding JSON and policy excerpts | `{ "category": "merit_scholarship" }` |
+| Boolean | Independent policy checks | Parsed policy rules and question facts | GPA, academic-year, and existing-scholarship pass/fail reasons; combined into `eligible`. |
+| Score | Policy support | Number of passed checks / number of required checks | `{ "score": 0.67 }` for two of three satisfied conditions. |
 
-Application logic must mark the result `human_review` or request missing information when required facts are absent. It must not let the final LLM override a boolean rule result.
+Application logic marks the result `human_review` when a retrieved policy requires facts absent from the question. The final LLM cannot override a boolean rule result. If no relevant policy is retrieved, return `unable_to_answer` instead of human review.
 
 ## LLM contract: grounded answer generation
 
@@ -85,7 +85,7 @@ JWT_SECRET=replace_me
 LLM_API_KEY=replace_me
 LLM_MODEL=replace_me
 DOCUMENT_STORAGE_PATH=./storage
-APP_BASE_URL=http://localhost:8080
+APP_BASE_URL=http://localhost:5173
 ```
 
 Keep `.env` out of version control; provide the same variable names without secrets in `.env.example`.

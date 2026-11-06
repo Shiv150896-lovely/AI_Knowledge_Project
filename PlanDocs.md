@@ -35,8 +35,8 @@ Each organization has isolated users, documents, chunks, assistant token, and us
 | users | id, organization_id, email, password_hash, created_at | Dashboard account. |
 | assistants | id, organization_id, public_token, token_hash, token_hint, created_at, rotated_at | Public assistant identity; retain the random public URL token for dashboard embed-code retrieval and its hash for server-side validation. |
 | documents | id, organization_id, filename, storage_key, size_bytes, page_count, status, created_at | Private uploaded PDF metadata. |
-| document_chunks | id, organization_id, document_id, page_number, content, embedding | Tenant-scoped retrieval source. |
-| question_logs | id, organization_id, assistant_id, question, outcome, created_at | Usage counts: answered, unable_to_answer, human_review. |
+| document_chunks | id, organization_id, document_id, page_number, content | Tenant-scoped keyword-retrieval source. |
+| question_logs | id, organization_id, assistant_id, outcome, created_at | Usage counts: answered, unable_to_answer, human_review; question text is intentionally not stored. |
 
 ## Processing and question pipeline
 
@@ -45,7 +45,7 @@ Each organization has isolated users, documents, chunks, assistant token, and us
 3. For public questions, validate the assistant token and resolve its organization.
 4. Retrieve only chunks where `organization_id` equals the resolved organization. Keep document filename and page number with retrieved context.
 5. Use the LLM to classify/decompose the question and to generate the final answer from retrieved context and decision results.
-6. For policy/multi-condition questions, evaluate independent structured decisions in application/System 1 logic. Demonstrate at least two types: classification/choice and boolean eligibility; include score when policy support strength is needed.
+6. For policy/multi-condition questions, the LLM classifies/decomposes the question but deterministic application/System 1 logic extracts policy rules and user facts, then independently evaluates GPA, academic-year, and existing-scholarship conditions. Combine the boolean results into eligibility and calculate a score from passed conditions.
 7. Combine decision outputs in application logic, then ask the LLM to phrase a grounded answer. Return cited sources. If evidence is absent, return an unable-to-answer response and no invented content.
 
 ## Endpoint map
@@ -115,8 +115,8 @@ Errors: `401` missing/invalid JWT.
 
 Headers: `Authorization: Bearer <jwt>`, `Content-Type: multipart/form-data`  
 Form params: `file` (required PDF)  
-Response `201`: `{"data":{"id":"doc_uuid","filename":"Scholarship_Rules.pdf","size_bytes":524288,"page_count":8,"status":"processing"}}`  
-Errors: `400` missing/invalid PDF, `409` document limit reached, `413` file exceeds 10 MB, `422` PDF exceeds 20 pages, `500` document-processing failure.
+Response `201`: `{"data":{"id":"doc_uuid","filename":"Scholarship_Rules.pdf","size_bytes":524288,"page_count":8,"status":"ready"}}`  
+The current MVP processes uploads synchronously. Errors: `400` missing/invalid PDF, `409` document limit reached, `413` file exceeds 10 MB, `422` PDF exceeds 20 pages or document-processing failure, `500` storage/database failure.
 
 ### DELETE /api/documents/:documentId
 
@@ -160,8 +160,13 @@ Errors: `400` empty question, `401` invalid assistant token, `422` no relevant k
 
 ## Isolation and error acceptance checks
 
+- `TEST_DATABASE_URL="postgres://..." go test ./Repository -run TenantIsolation` proves Organization A search results contain only A chunks and references, and that regenerating A's assistant invalidates its old token.
 - A JWT for Organization A cannot list, upload against, or delete Organization B documents.
 - An assistant token for Organization A cannot retrieve Organization B chunks or references.
 - Replacing/regenerating a token makes the old token invalid.
 - Invalid PDF; 11th document; PDF over 10 MB; PDF over 20 pages; empty question; unavailable LLM/decision service; and extraction failure return the mapped user-facing errors.
 - Verify direct information, policy, procedural, multi-condition decision, comparison, and no-answer questions.
+
+## Reviewer fixture
+
+`sample-data/Merit_Scholarship_Policy.txt` contains policy text and expected questions for deterministic decision testing. Save or print this text as a PDF, upload it, then use the listed questions to verify eligible, ineligible, and human-review outcomes.
