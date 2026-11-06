@@ -1,0 +1,6 @@
+Organization A - Acme University
+Admissions Procedures
+
+Applicants create an account in the Admissions Portal, upload academic transcripts, select a programme, and submit the application.
+
+The Admissions Office reviews complete applications within ten working days. Applicants receive the decision by email. Scholarship questions are handled under the Merit Scholarship Policy.
