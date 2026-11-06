@@ -1,4 +1,4 @@
-import React, { FormEvent, ReactNode, useEffect, useMemo, useState } from 'react'
+import React, { Component, ErrorInfo, FormEvent, ReactNode, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter, Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom'
 import './styles.css'
@@ -11,6 +11,8 @@ const session = {
 }
 
 type Doc = { id: string; filename: string; size_bytes: number; page_count: number; status: string; created_at: string }
+type BackendDocument = Partial<Doc> & { ID?: string; Filename?: string; SizeBytes?: number; PageCount?: number; Status?: string; CreatedAt?: string }
+type BackendOrganization = { name?: string; Name?: string }
 type Assistant = { url: string; embed_code: string }
 type Usage = { questions_asked: number; answered: number; unable_to_answer: number; human_review: number }
 type Reference = { document: string; page: number }
@@ -27,6 +29,9 @@ async function request<T>(path: string, init: RequestInit = {}, admin = false): 
   return json.data as T
 }
 const formatSize = (n: number) => n < 1024 * 1024 ? `${Math.max(1, Math.ceil(n / 1024))} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`
+function normalizeDocument(doc: BackendDocument): Doc {
+  return { id: doc.id ?? doc.ID ?? '', filename: doc.filename ?? doc.Filename ?? 'Untitled document', size_bytes: doc.size_bytes ?? doc.SizeBytes ?? 0, page_count: doc.page_count ?? doc.PageCount ?? 0, status: doc.status ?? doc.Status ?? 'processing', created_at: doc.created_at ?? doc.CreatedAt ?? new Date().toISOString() }
+}
 const Icon = ({ name }: { name: string }) => <span className="icon" aria-hidden="true">{name}</span>
 
 function Notice({ kind = 'error', children }: { kind?: 'error' | 'success' | 'info'; children: ReactNode }) { return <div className={`notice ${kind}`} role="status">{children}</div> }
@@ -49,15 +54,15 @@ function AuthPage({ mode }: { mode: 'login' | 'register' }) {
 function Protected({ children }: { children: ReactNode }) { return session.get() ? <>{children}</> : <Navigate to="/login" replace /> }
 function DashboardLayout({ children }: { children: ReactNode }) {
   const nav = useNavigate(), location = useLocation(), [name, setName] = useState('Your organization')
-  useEffect(() => { request<{ name: string }>('/api/organization', {}, true).then(x => setName(x.name)).catch(err => { if (err instanceof ApiError && err.status === 401) { session.clear(); nav('/login') } }) }, [nav])
+  useEffect(() => { request<BackendOrganization>('/api/organization', {}, true).then(x => setName(x.name ?? x.Name ?? 'Your organization')).catch(err => { if (err instanceof ApiError && err.status === 401) { session.clear(); nav('/login') } }) }, [nav])
   const logout = async () => { try { await request('/api/auth/logout', { method: 'POST' }, true) } catch { /* local logout remains valid */ } session.clear(); nav('/login') }
   const title = location.pathname.includes('assistant') ? 'Assistant' : location.pathname.includes('usage') ? 'Usage' : 'Knowledge base'
-  return <div className="dashboard"><aside className="sidebar"><Brand/><div className="workspace"><span className="avatar">{name.slice(0, 1).toUpperCase()}</span><span><b>{name}</b><small>Organization workspace</small></span></div><nav><NavLink to="/dashboard/knowledge-base"><Icon name="▤"/>Knowledge base</NavLink><NavLink to="/dashboard/assistant"><Icon name="✦"/>Assistant</NavLink><NavLink to="/dashboard/usage"><Icon name="◔"/>Usage</NavLink></nav><button className="logout" onClick={logout}><Icon name="←"/>Log out</button></aside><main className="dashboard-main"><header className="topbar"><div><span className="eyebrow">Workspace</span><h1>{title}</h1></div><span className="secure"><i/> Private to {name}</span></header>{children}</main></div>
+  return <div className="dashboard"><aside className="sidebar"><Brand/><div className="workspace"><span className="avatar">{(name || 'O').slice(0, 1).toUpperCase()}</span><span><b>{name || 'Your organization'}</b><small>Organization workspace</small></span></div><nav><NavLink to="/dashboard/knowledge-base"><Icon name="▤"/>Knowledge base</NavLink><NavLink to="/dashboard/assistant"><Icon name="✦"/>Assistant</NavLink><NavLink to="/dashboard/usage"><Icon name="◔"/>Usage</NavLink></nav><button className="logout" onClick={logout}><Icon name="←"/>Log out</button></aside><main className="dashboard-main"><header className="topbar"><div><span className="eyebrow">Workspace</span><h1>{title}</h1></div><span className="secure"><i/> Private to {name || 'your organization'}</span></header>{children}</main></div>
 }
 
 function KnowledgeBase() {
   const [docs, setDocs] = useState<Doc[]>([]), [loading, setLoading] = useState(true), [error, setError] = useState(''), [uploading, setUploading] = useState(false), [notice, setNotice] = useState('')
-  const load = () => { setLoading(true); request<{ documents: Doc[] }>('/api/documents', {}, true).then(x => setDocs(x.documents)).catch(e => setError(e.message)).finally(() => setLoading(false)) }
+  const load = () => { setLoading(true); request<{ documents: BackendDocument[] }>('/api/documents', {}, true).then(x => setDocs((x.documents || []).map(normalizeDocument))).catch(e => setError(e.message)).finally(() => setLoading(false)) }
   useEffect(() => { void load() }, [])
   const upload = async (file?: File) => { if (!file) return; setError(''); setNotice(''); if (!file.name.toLowerCase().endsWith('.pdf') || file.type && file.type !== 'application/pdf') return setError('Upload a valid PDF document.'); if (file.size > 10 * 1024 * 1024) return setError('This PDF exceeds the 10 MB limit.'); const body = new FormData(); body.append('file', file); setUploading(true); try { await request('/api/documents', { method: 'POST', body }, true); setNotice('Document uploaded and ready for retrieval.'); load() } catch (e) { setError(e instanceof Error ? e.message : 'This document could not be processed. Try another PDF.') } finally { setUploading(false) } }
   const remove = async (doc: Doc) => { if (!confirm(`Delete ${doc.filename}? This cannot be undone.`)) return; setError(''); try { await request(`/api/documents/${doc.id}`, { method: 'DELETE' }, true); setDocs(x => x.filter(d => d.id !== doc.id)); setNotice('Document deleted.') } catch (e) { setError(e instanceof Error ? e.message : 'Could not delete document.') } }
@@ -82,4 +87,10 @@ function PublicAssistant() {
 }
 
 function App() { return <Routes><Route path="/login" element={<AuthPage mode="login"/>}/><Route path="/register" element={<AuthPage mode="register"/>}/><Route path="/assistant/:assistantToken" element={<PublicAssistant/>}/><Route path="/dashboard/knowledge-base" element={<Protected><DashboardLayout><KnowledgeBase/></DashboardLayout></Protected>}/><Route path="/dashboard/assistant" element={<Protected><DashboardLayout><AssistantPage/></DashboardLayout></Protected>}/><Route path="/dashboard/usage" element={<Protected><DashboardLayout><UsagePage/></DashboardLayout></Protected>}/><Route path="*" element={<Navigate to={session.get() ? '/dashboard/knowledge-base' : '/login'} replace/>}/></Routes> }
-createRoot(document.getElementById('root')!).render(<React.StrictMode><BrowserRouter><App/></BrowserRouter></React.StrictMode>)
+class AppErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state = { error: null as Error | null }
+  static getDerivedStateFromError(error: Error) { return { error } }
+  componentDidCatch(error: Error, info: ErrorInfo) { console.error('Frontend render error', error, info) }
+  render() { return this.state.error ? <main className="fatal-error"><div><span className="brand-mark">C</span><h1>The dashboard could not load.</h1><p>{this.state.error.message}</p><button className="button primary" onClick={() => window.location.assign('/login')}>Return to sign in</button></div></main> : this.props.children }
+}
+createRoot(document.getElementById('root')!).render(<React.StrictMode><AppErrorBoundary><BrowserRouter><App/></BrowserRouter></AppErrorBoundary></React.StrictMode>)
